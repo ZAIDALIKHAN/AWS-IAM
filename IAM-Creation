@@ -1,0 +1,156 @@
+🪪 Step 1: Create the IAM Trust Policy (for EC2)
+
+This allows EC2 to assume the role.
+
+cat > ec2-trust-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+🧩 Step 2: Create the IAM Role
+aws iam create-role \
+  --role-name TerraformEC2Role \
+  --assume-role-policy-document file://ec2-trust-policy.json
+
+
+✅ Output: You’ll see JSON confirming creation with RoleId, Arn, etc.
+
+🛡️ Step 3: Create the Terraform Policy (permissions we defined earlier)
+
+Create the JSON file locally:
+
+cat > terraform-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3ForTerraformState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::zaid-terraform-backend",
+        "arn:aws:s3:::zaid-terraform-backend/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBForLocks",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-south-1:YOUR_ACCOUNT_ID:table/terraform-locks"
+    },
+    {
+      "Sid": "EC2AndNetworkingBasics",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*",
+        "ec2:CreateTags",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:AllocateAddress",
+        "ec2:AssociateAddress",
+        "ec2:CreateSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMReadIfNeeded",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole",
+        "iam:GetRole"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3ListAllBuckets",
+      "Effect": "Allow",
+      "Action": ["s3:ListAllMyBuckets"],
+      "Resource": ["arn:aws:s3:::*"]
+    }
+  ]
+}
+EOF
+
+
+👉 Replace YOUR_ACCOUNT_ID with your actual AWS Account ID (you can get it with):
+
+aws sts get-caller-identity --query Account --output text
+
+🧰 Step 4: Create the Policy in AWS
+aws iam create-policy \
+  --policy-name TerraformPolicy \
+  --policy-document file://terraform-policy.json
+
+
+✅ Output: note the "Arn" — it’ll look like:
+
+"Arn": "arn:aws:iam::123456789012:policy/TerraformPolicy"
+
+🔗 Step 5: Attach Policy to the Role
+aws iam attach-role-policy \
+  --role-name TerraformEC2Role \
+  --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/TerraformPolicy
+
+
+(Replace YOUR_ACCOUNT_ID accordingly.)
+
+🧠 Step 6: Create the Instance Profile (Required for EC2 Attachment)
+aws iam create-instance-profile --instance-profile-name TerraformEC2Profile
+aws iam add-role-to-instance-profile \
+  --instance-profile-name TerraformEC2Profile \
+  --role-name TerraformEC2Role
+
+
+✅ Output: You’ll get confirmation for both.
+
+⚙️ Step 7: Attach Role to Your EC2 Instance
+
+List your instances:
+
+aws ec2 describe-instances --query "Reservations[*].Instances[*].[InstanceId,Tags]" --output table
+
+
+Note the InstanceId of your Terraform host EC2 (the one you SSH into).
+
+Then attach the profile:
+
+aws ec2 associate-iam-instance-profile \
+  --instance-id i-xxxxxxxxxxxxxxxxx \
+  --iam-instance-profile Name=TerraformEC2Profile
+
+
+✅ This immediately attaches the IAM role to your EC2.
+
+🧪 Step 8: Verify IAM Role Works
+
+Run:
+
+aws sts get-caller-identity
